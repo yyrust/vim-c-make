@@ -1,0 +1,214 @@
+ORIG_DIR=$PWD
+
+# find project root dir
+PROJECT_ROOT_DIR=""
+PROJECT_FILE_NAME=".cmake_project"
+
+# 1. find the dir which contains .cmake_project
+_DIR=$ORIG_DIR
+while [ ! -f $_DIR/$PROJECT_FILE_NAME ]; do
+    _DIR=`dirname $_DIR`
+    if [ $_DIR == "/" ]; then
+        break
+    fi
+done
+
+# 2. if not found, find by CMakeLists.txt
+if [ -z $PROJECT_ROOT_DIR ]; then
+    _DIR=$ORIG_DIR
+    while [ -f $_DIR/CMakeLists.txt ]; do
+        _PARENT=`dirname $_DIR`
+        if [ ! -f $_PARENT/CMakeLists.txt ]; then # found
+            PROJECT_ROOT_DIR=$_DIR
+            break
+        fi
+        # not found
+        _DIR=$_PARENT
+    done
+fi
+
+if [ -z $PROJECT_ROOT_DIR ]; then
+    echo "cannot find project root dir"
+    exit -1
+fi
+
+echo "project root dir: "$PROJECT_ROOT_DIR
+
+# create .cmake_project if not exist
+_CREATE_PROJECT_FILE=0
+if [ ! -f $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME ]; then
+    while true; do
+        read -p "create $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME ? [y/n]" yn
+        case $yn in
+            [Yy]* ) _CREATE_PROJECT_FILE=1; break;;
+            [Nn]* ) echo "quit"; exit -1; break;;
+        esac
+    done
+    if [ $_CREATE_PROJECT_FILE -eq 1 ]; then
+        # find build dirs
+        _BUILD_DIR_CANDIDATES=($PROJECT_ROOT_DIR/build*)
+        _BUILD_DIRS=()
+        for _DIR in ${_BUILD_DIR_CANDIDATES[@]}; do
+            if [ -f $_DIR/CMakeCache.txt ]; then
+                _BASE=`basename $_DIR`
+                echo "["${#_BUILD_DIRS[@]}"] "$_BASE
+                _BUILD_DIRS+=($_BASE)
+            fi
+        done
+
+        # if no build dirs found, create one
+        if [ ${#_BUILD_DIRS[@]} -eq 0 ]; then
+            BUILD_TYPE=""
+            while true; do
+                echo "create build directory?"
+                echo "[0] Debug"
+                echo "[1] RelWithDebInfo"
+                echo "[2] Release"
+                echo "[q] quit"
+                read  -p "[0/1/2/q]" chosen
+                case $chosen in
+                    [0]* ) BUILD_TYPE=Debug; break;;
+                    [1]* ) BUILD_TYPE=RelWithDebInfo; break;;
+                    [2]* ) BUILD_TYPE=Release; break;;
+                    [q]* ) echo "quit"; exit 0; break;;
+                esac
+            done
+            BUILD_DIR=build$BUILD_TYPE
+            BUILD_ROOT_DIR=$PROJECT_ROOT_DIR/$BUILD_DIR
+            CMAKE_BACKEND="Unix Makefiles"
+            if [ $1 == 'ninja' ]; then
+                CMAKE_BACKEND="Ninja"
+            fi
+            echo "mkdir $BUILD_DIR && cd $BUILD_DIR && cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -G '$CMAKE_BACKEND'"
+            mkdir $BUILD_ROOT_DIR && cd $BUILD_ROOT_DIR && cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -G "$CMAKE_BACKEND"
+        # if there are multiple build dirs
+        elif [ ${#_BUILD_DIRS[@]} -gt 1 ]; then
+            while true; do
+                read -p "choose one build dir:" dir_id
+                if [ $dir_id == "q" ]; then
+                    echo "quit"
+                    exit 0
+                fi
+                if [ $dir_id -lt 0 ]; then
+                    echo "invalid number"
+                    continue
+                fi
+                if [ $dir_id -ge ${#_BUILD_DIRS[@]} ]; then
+                    echo "number out of range"
+                    continue
+                fi
+                BUILD_DIR=${_BUILD_DIRS[$dir_id]}
+                break
+            done
+        # if there is exactly one build dir
+        else
+            BUILD_DIR=${_BUILD_DIRS[0]}
+        fi
+        BUILD_ROOT_DIR=$PROJECT_ROOT_DIR/$BUILD_DIR
+        echo "writing $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
+        echo "BUILD_DIR="$BUILD_DIR >> $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME
+    fi
+else # project file exists
+    echo "reading $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
+    while IFS="=" read -r key value; do
+        case "$key" in
+            "BUILD_DIR") BUILD_ROOT_DIR=$PROJECT_ROOT_DIR/"$value" ;;
+        esac
+    done < "$PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
+fi
+
+if [ -z BUILD_ROOT_DIR ]; then
+    echo cannot find build root dir
+    exit 1
+fi
+
+RELATE_DIR=${ORIG_DIR:${#PROJECT_ROOT_DIR}}
+CURRENT_BUILD_DIR="$BUILD_ROOT_DIR$RELATE_DIR"
+echo "CURRENT_BUILD_DIR: "$CURRENT_BUILD_DIR
+
+DEBUG=0
+MEMCHECK=0
+
+function run_executable {
+    EXECUTABLES=()
+    PATTERN=$1
+
+    # see https://stackoverflow.com/a/23364613
+    find . -type f -exec test -x {} \; -print0 > c_executables
+
+    # see https://stackoverflow.com/a/23357277
+    while IFS=  read -r -d $'\0'; do
+        EXECUTABLES+=("$REPLY")
+    done < c_executables
+
+    if [ ${#EXECUTABLES[@]} -eq 0 ]; then
+        echo "no executables in current build dir"
+    elif [ ${#EXECUTABLES[@]} -ne 1 ]; then
+        # if there are more than one executables, choose the one which matches a given pattern
+        if [ -z $PATTERN ]; then
+            echo "ERROR: more than one executables found in current build dir, please use a pattern to choose one"
+            for e in "${EXECUTABLES[@]}" ; do
+                echo "    $e"
+            done
+            return
+        fi
+    fi
+
+    MATCHED_EXECUTABLES=()
+
+    if [ -z $PATTERN ]; then
+        MATCHED_EXECUTABLES+=(${EXECUTABLES[0]})
+    else
+        for e in "${EXECUTABLES[@]}" ; do
+            if [[ "$e" == "./$PATTERN" ]]; then
+                MATCHED_EXECUTABLES=($e)
+                break
+            fi
+            if [[ "$e" =~ "$PATTERN" ]]; then
+                MATCHED_EXECUTABLES+=($e)
+            fi
+        done
+    fi
+
+    if [ ${#MATCHED_EXECUTABLES[@]} -eq 0 ]; then
+        echo "cannot find executable matching pattern "$PATTERN
+        return
+    elif [ ${#MATCHED_EXECUTABLES[@]} -ne 1 ]; then
+        echo "ERROR: more than one executables matching pattern '"$PATTERN"', please use a more specific pattern"
+        for e in "${MATCHED_EXECUTABLES[@]}" ; do
+            echo "    $e"
+        done
+        return
+    else
+        EXECUTABLE="${MATCHED_EXECUTABLES[0]}"
+        echo "execute $EXECUTABLE ${@:2}"
+        if [ $DEBUG -eq 1 ]; then
+            gdb --args $EXECUTABLE "${@:2}"
+        elif [ $MEMCHECK -eq 1 ]; then
+            valgrind --leak-check=full $EXECUTABLE "${@:2}"
+        else
+            $EXECUTABLE "${@:2}"
+        fi
+    fi
+}
+
+if [ -f $BUILD_ROOT_DIR/build.ninja ]; then
+    MAKEPRG=ninja
+    MAKE_WORKING_DIR=$BUILD_ROOT_DIR
+else
+    MAKEPRG=make
+    MAKE_WORKING_DIR=$CURRENT_BUILD_DIR
+fi
+echo MAKEPRG: $MAKEPRG
+echo MAKE_WORKING_DIR: $MAKE_WORKING_DIR
+
+JOBS=4
+
+case "$1" in
+    "make") $MAKEPRG -C $MAKE_WORKING_DIR -j$JOBS "${@:2}"; break;;  # the '-C DIR" options is also useful for vim quickfix, see https://vi.stackexchange.com/a/2332
+    "ninja") $MAKEPRG -C $MAKE_WORKING_DIR -j$JOBS "${@:2}"; break;;
+    "test") cd $CURRENT_BUILD_DIR; ctest "${@:2}"; break;;
+    "run") cd $CURRENT_BUILD_DIR; run_executable "${@:2}"; break;;
+    "debug") cd $CURRENT_BUILD_DIR; DEBUG=1; run_executable "${@:2}"; break;;
+    "memcheck") cd $CURRENT_BUILD_DIR; MEMCHECK=1; run_executable "${@:2}"; break;;
+esac
