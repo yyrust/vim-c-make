@@ -205,10 +205,10 @@ echo MAKE_WORKING_DIR: $MAKE_WORKING_DIR
 JOBS=4
 
 case "$1" in
-    "make") $MAKEPRG -C $MAKE_WORKING_DIR -j$JOBS "${@:2}"; break;;  # the '-C DIR" options is also useful for vim quickfix, see https://vi.stackexchange.com/a/2332
-    "ninja") $MAKEPRG -C $MAKE_WORKING_DIR -j$JOBS "${@:2}"; break;;
-    "test") cd $CURRENT_BUILD_DIR; ctest "${@:2}"; break;;
-    "run") cd $CURRENT_BUILD_DIR; run_executable "${@:2}"; break;;
-    "debug") cd $CURRENT_BUILD_DIR; DEBUG=1; run_executable "${@:2}"; break;;
-    "memcheck") cd $CURRENT_BUILD_DIR; MEMCHECK=1; run_executable "${@:2}"; break;;
+    "make") $MAKEPRG -C $MAKE_WORKING_DIR -j$JOBS "${@:2}";;  # the '-C DIR" options is also useful for vim quickfix, see https://vi.stackexchange.com/a/2332
+    "ninja") $MAKEPRG -C $MAKE_WORKING_DIR -j$JOBS "${@:2}";;
+    "test") cd $CURRENT_BUILD_DIR; ctest "${@:2}";;
+    "run") cd $CURRENT_BUILD_DIR; run_executable "${@:2}";;
+    "debug") cd $CURRENT_BUILD_DIR; DEBUG=1; run_executable "${@:2}";;
+    "memcheck") cd $CURRENT_BUILD_DIR; MEMCHECK=1; run_executable "${@:2}";;
 esac
