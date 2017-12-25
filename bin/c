@@ -84,20 +84,24 @@ if [ ! -f $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME ]; then
         # if there are multiple build dirs
         elif [ ${#_BUILD_DIRS[@]} -gt 1 ]; then
             while true; do
-                read -p "choose one build dir:" dir_id
-                if [ $dir_id == "q" ]; then
+                read -p "please choose one build dir:" _DIR_IDX
+                if [ -z $_DIR_IDX ]; then  # empty input
+                    echo "nothing is chosen, quit"
+                    exit
+                fi
+                if [ $_DIR_IDX == "q" ]; then
                     echo "quit"
                     exit 0
                 fi
-                if [ $dir_id -lt 0 ]; then
+                if [ $_DIR_IDX -lt 0 ]; then
                     echo "invalid number"
                     continue
                 fi
-                if [ $dir_id -ge ${#_BUILD_DIRS[@]} ]; then
+                if [ $_DIR_IDX -ge ${#_BUILD_DIRS[@]} ]; then
                     echo "number out of range"
                     continue
                 fi
-                BUILD_DIR=${_BUILD_DIRS[$dir_id]}
+                BUILD_DIR=${_BUILD_DIRS[$_DIR_IDX]}
                 break
             done
         # if there is exactly one build dir
@@ -106,7 +110,7 @@ if [ ! -f $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME ]; then
         fi
         BUILD_ROOT_DIR=$PROJECT_ROOT_DIR/$BUILD_DIR
         echo "writing $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
-        echo "BUILD_DIR="$BUILD_DIR >> $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME
+        echo "BUILD_DIR="$BUILD_DIR > $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME
     fi
 else # project file exists
     echo "reading $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
@@ -116,6 +120,61 @@ else # project file exists
         esac
     done < "$PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
 fi
+
+switch_build_dir () {
+    local _CURRENT_BUILD_DIR=$1
+    # find build dirs
+    _BUILD_DIR_CANDIDATES=($PROJECT_ROOT_DIR/build*)
+    _BUILD_DIRS=()
+    for _DIR in ${_BUILD_DIR_CANDIDATES[@]}; do
+        if [ -f $_DIR/CMakeCache.txt ]; then
+            local _BASE=`basename $_DIR`
+            local _NOTE=""
+            if [[ "$_DIR" == "$_CURRENT_BUILD_DIR" ]]; then
+                _NOTE=" (current)"
+            fi
+            echo "["${#_BUILD_DIRS[@]}"] "$_BASE$_NOTE
+            _BUILD_DIRS+=($_BASE)
+        fi
+    done
+
+    # if no build dirs found, create one
+    if [ ${#_BUILD_DIRS[@]} -eq 0 ]; then
+        echo ERROR: No available build directories
+        exit 1
+    # if there are multiple build dirs
+    elif [ ${#_BUILD_DIRS[@]} -gt 1 ]; then
+        while true; do
+            local _DIR_IDX
+            read -p "please choose one build dir:" _DIR_IDX
+            if [ -z $_DIR_IDX ]; then  # empty input
+                echo "nothing is chosen, quit"
+                exit
+            fi
+            if [ $_DIR_IDX == "q" ]; then
+                echo "quit"
+                exit 0
+            fi
+            if [ $_DIR_IDX -lt 0 ]; then
+                echo "invalid number"
+                continue
+            fi
+            if [ $_DIR_IDX -ge ${#_BUILD_DIRS[@]} ]; then
+                echo "number out of range"
+                continue
+            fi
+            BUILD_DIR=${_BUILD_DIRS[$_DIR_IDX]}
+            break
+        done
+    # if there is exactly one build dir
+    else
+        BUILD_DIR=${_BUILD_DIRS[0]}
+    fi
+    BUILD_ROOT_DIR=$PROJECT_ROOT_DIR/$BUILD_DIR
+    echo "writing $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME"
+    echo "BUILD_DIR="$BUILD_DIR > $PROJECT_ROOT_DIR/$PROJECT_FILE_NAME
+    echo now build directory is "$BUILD_DIR"
+}
 
 if [ -z BUILD_ROOT_DIR ]; then
     echo cannot find build root dir
@@ -130,8 +189,8 @@ DEBUG=0
 MEMCHECK=0
 
 function run_executable {
-    EXECUTABLES=()
-    PATTERN=$1
+    local EXECUTABLES=()
+    local PATTERN=$1
 
     # see https://stackoverflow.com/a/23364613
     find . -type f -exec test -x {} \; -print0 > c_executables
@@ -211,4 +270,5 @@ case "$1" in
     "run") cd $CURRENT_BUILD_DIR; run_executable "${@:2}";;
     "debug") cd $CURRENT_BUILD_DIR; DEBUG=1; run_executable "${@:2}";;
     "memcheck") cd $CURRENT_BUILD_DIR; MEMCHECK=1; run_executable "${@:2}";;
+    "switch") switch_build_dir $CURRENT_BUILD_DIR;;
 esac
